@@ -21,8 +21,8 @@ import pandas as pd
 
 FOLDER_DATA = path_join(os.getcwd(), "data")
 FOLDER_DISTRIBUTIONALVEC = path_join(FOLDER_DATA, "DistributionalVec")
-FNAME_WORD2VEC_GOOGLENEWS = path_join(FOLDER_DISTRIBUTIONALVEC, "gensim_glove.840B.300d.txt.bin")
-FNAME_GLOVE_840B300D = path_join(FOLDER_DISTRIBUTIONALVEC, "GoogleNews-vectors-negative300.bin.gz")
+FNAME_WORD2VEC_GOOGLENEWS = path_join(FOLDER_DISTRIBUTIONALVEC, "GoogleNews-vectors-negative300.bin.gz")
+FNAME_GLOVE_840B300D = path_join(FOLDER_DISTRIBUTIONALVEC, "gensim_glove.840B.300d.txt.bin")
 
 FOLDER_NONDISTRIBUTIONALVEC = path_join(FOLDER_DATA, "NondistributionalVec")
 
@@ -80,6 +80,49 @@ def read_nondist_wordvec():
     pass
 
 
+def proto_conceptor(word_vec, embedding_name, alpha = 1, plotSpectrum = False):
+    # compute the prototype conceptor with alpha = 1
+
+    x_collector = word_vec.T
+
+    nrWords = x_collector.shape[1]  # number of total words
+
+    R = x_collector.dot(x_collector.T) / nrWords  # calculate the correlation matrix
+
+    C = R @ inv(R + alpha ** (-2) * np.eye(300))  # calculate the conceptor matrix
+
+    if plotSpectrum:  # visualization: plot the spectrum of the correlation matrix
+        Ux, Sx, _ = np.linalg.svd(R)
+
+        downWeighedSigVal = Sx / np.array([(1 + alpha * sigma2) for sigma2 in Sx])
+
+        plt.plot(np.arange(300), Sx, 'bo', alpha=0.4,
+                 label='orig ' + embedding_name + ' spectrum')  # here alpha is the transparency level for dots, don't get confused by the hyperparameter alpha!
+        plt.plot(np.arange(300), downWeighedSigVal, 'ro', alpha=0.4,
+                 label='downweighted ' + embedding_name + ' spectrum')  # here alpha is the transparency level for dots, don't get confused by the hyperparameter alpha!
+
+        plt.legend()
+        plt.show()
+    return C
+
+
+def PHI(C, gamma):
+    # The PHI function allows us to tune the aperture (alpha) by reusing the prototype conceptor. See https://arxiv.org/pdf/1403.3369.pdf
+    dim = C.shape[0]
+    if gamma == 0:
+        U, S, _ = np.linalg.svd(C)
+        S[S < 1] = np.zeros((np.sum((S < 1).astype(float)), 1))
+        C_new = U.dot(S).dot(U.T)
+    elif gamma == np.Inf:
+        U, S, _ = np.linalg.svd(C)
+        S[S > 0] = np.zeros((np.sum((S > 0).astype(float)), 1))
+        C_new = U.dot(S).dot(U.T)
+    else:
+        C_new = C.dot(np.linalg.inv(C + gamma ** -2 * (np.eye(dim) - C)))
+
+    return C_new
+
+
 def load_abtt_results():
     ## (Optional) Load the results reported in https://openreview.net/pdf?id=HkuGJ3kCb
     w2v_abtt_result = {}
@@ -123,7 +166,7 @@ def similarity_eval(dataSetAddress, wordVecModel, vocab, conceptorProj=False, C 
 
     extracted_list = []
 
-    C = np.zeros((300, 300)) if conceptorProj else C
+    C = C if conceptorProj else np.zeros((300, 300))
 
     for (x, y) in pair_list:
         (word_i, word_j) = x
@@ -160,7 +203,9 @@ def evaluation_wordvectorsorg(D_embedding_vec, folder_evaluation, L_fname):
     for ii in D_embedding_vec:
         D_embedding_Cproto[ii] = proto_conceptor(D_embedding_vec[ii][1], ii)
         D_embedding_Cadjusted[ii] = PHI(D_embedding_Cproto[ii], D_embedding_beta[ii])
+        print('beta of % s = % s' % (ii, D_embedding_beta[ii]))
         print('Quota for % s conceptor is' % ii, trace(D_embedding_Cadjusted[ii]) / 300)
+    print()
 
     wordSimResult = {}
     for fname in L_fname:
@@ -182,6 +227,7 @@ def evaluation_wordvectorsorg(D_embedding_vec, folder_evaluation, L_fname):
                 [D_embedding_abbt_result[embedding][fname] * 100,
                  round(tmp_similarity * 100, 2)]
 
+
         print('\n')
 
     wordSimResult_df = pd.DataFrame(wordSimResult, index=['all-but-the-top', 'conceptor']).T
@@ -192,49 +238,6 @@ def evaluation_wordvectorsorg(D_embedding_vec, folder_evaluation, L_fname):
     plt.show()
 
     return
-
-
-def proto_conceptor(word_vec, embedding_name, alpha = 1, plotSpectrum = False):
-    # compute the prototype conceptor with alpha = 1
-
-    x_collector = word_vec.T
-
-    nrWords = x_collector.shape[1]  # number of total words
-
-    R = x_collector.dot(x_collector.T) / nrWords  # calculate the correlation matrix
-
-    C = R @ inv(R + alpha ** (-2) * np.eye(300))  # calculate the conceptor matrix
-
-    if plotSpectrum:  # visualization: plot the spectrum of the correlation matrix
-        Ux, Sx, _ = np.linalg.svd(R)
-
-        downWeighedSigVal = Sx / np.array([(1 + alpha * sigma2) for sigma2 in Sx])
-
-        plt.plot(np.arange(300), Sx, 'bo', alpha=0.4,
-                 label='orig ' + embedding_name + ' spectrum')  # here alpha is the transparency level for dots, don't get confused by the hyperparameter alpha!
-        plt.plot(np.arange(300), downWeighedSigVal, 'ro', alpha=0.4,
-                 label='downweighted ' + embedding_name + ' spectrum')  # here alpha is the transparency level for dots, don't get confused by the hyperparameter alpha!
-
-        plt.legend()
-        plt.show()
-    return C
-
-
-def PHI(C, gamma):
-    # The PHI function allows us to tune the aperture (alpha) by reusing the prototype conceptor. See https://arxiv.org/pdf/1403.3369.pdf
-    dim = C.shape[0]
-    if gamma == 0:
-        U, S, _ = np.linalg.svd(C)
-        S[S < 1] = np.zeros((np.sum((S < 1).astype(float)), 1))
-        C_new = U.dot(S).dot(U.T)
-    elif gamma == np.Inf:
-        U, S, _ = np.linalg.svd(C)
-        S[S > 0] = np.zeros((np.sum((S > 0).astype(float)), 1))
-        C_new = U.dot(S).dot(U.T)
-    else:
-        C_new = C.dot(np.linalg.inv(C + gamma ** -2 * (np.eye(dim) - C)))
-
-    return C_new
 
 
 def Main():
