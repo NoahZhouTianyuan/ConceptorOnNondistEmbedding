@@ -52,11 +52,14 @@ def read_dist_wordvec(D_embedding_fname, fname_wordlist):
     '''
 
     wordlist = set()
-    with open(fname_wordlist) as ff:
-        for line in ff:
+    with open(fname_wordlist) as fread_wordlist:
+        for line in fread_wordlist:
             wordlist.add(line.strip().split(" ")[0])
 
     D_embedding_vec = dict()
+    # JS: What does ii mean -> i.e. name your variable so that I can understand
+    # p.s. I know what it means, but in general, I would expect ii to be an
+    # integer instead of a file name
     for ii in D_embedding_fname:
         wordVecModel = KeyedVectors.load_word2vec_format(D_embedding_fname[ii], binary=True)
         word_in_wordlist_and_model = set(list(wordVecModel.vocab)).intersection(wordlist)
@@ -200,6 +203,7 @@ def evaluation_wordvectorsorg(D_embedding_vec, folder_evaluation, L_fname):
     D_embedding_beta = {"word2vec": 2, "glove840B300D": 1}
     D_embedding_Cproto = dict()
     D_embedding_Cadjusted = dict()
+    # JS: Again ... not a fan of ii
     for ii in D_embedding_vec:
         D_embedding_Cproto[ii] = proto_conceptor(D_embedding_vec[ii][1], ii)
         D_embedding_Cadjusted[ii] = PHI(D_embedding_Cproto[ii], D_embedding_beta[ii])
