@@ -1,7 +1,7 @@
 
 
 import os
-from os.path import join as path_join
+from os.path import join as path_join, exists
 import datetime
 import gzip
 
@@ -22,12 +22,15 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
+FOLDER_RES = path_join(os.getcwd(), "res")
+
 FOLDER_DATA = path_join(os.getcwd(), "data")
 FOLDER_DISTRIBUTIONALVEC = path_join(FOLDER_DATA, "DistributionalVec")
 FNAME_WORD2VEC_GOOGLENEWS = path_join(FOLDER_DISTRIBUTIONALVEC, "GoogleNews-vectors-negative300.bin.gz")
 FNAME_GLOVE_840B300D = path_join(FOLDER_DISTRIBUTIONALVEC, "gensim_glove.840B.300d.txt.bin")
 
-FOLDER_NONDISTRIBUTIONALVEC = path_join(FOLDER_DATA, "NondistributionalVec")
+#FOLDER_NONDISTRIBUTIONALVEC = path_join(FOLDER_DATA, "NondistributionalVec")
+FOLDER_NONDISTRIBUTIONALVEC = r"D:\Work\JRodu\WordEmbeddingDomainSpecific\data source\pretrained embedding\nondist\res"
 
 FNAME_WIKIWORDS = path_join(FOLDER_DATA, "Wiki_vocab_gt200", "enwiki_vocab_min200.txt")
 
@@ -42,7 +45,12 @@ DICT_NONDIST_EMBEDDING_FNAME = {"Nondist300D_fullSV": "Nondist300D_fullSV.txt",
                                 "Nondist300D_wiki200_fullSV": "Nondist300D_fullSV.txt",
                                 "Nondist300D_wiki200_halfSV": "Nondist300D_halfSV.txt",
                                 "Nondist300D_wiki200_noSV": "Nondist300D_noSV.txt",}
-
+DICT_NONDIST_EMBEDDING_FNAME = dict()
+for sv_type in ["fullSV", "halfSV", "noSV"]:
+    for wiki200_type in ["_wiki200", ""]:
+        for dim in [100 * i for i in range(1, 11)]:
+            tmp_embedding = "Nondist_% sD_% s% s" % (dim, sv_type, wiki200_type)
+            DICT_NONDIST_EMBEDDING_FNAME[tmp_embedding] = tmp_embedding + ".txt"
 
 
 def read_dist_wordvec(D_embedding_fname, fname_wordlist):
@@ -105,8 +113,14 @@ def read_nondist_wordvec(folder_data, fname_wordlist, D_embedding_fname, is_read
         ans = dict()
         for embedding in D_embedding_fname:
             vocab, X = [], []
+            if not exists(path_join(folder_data, D_embedding_fname[embedding])):
+                print("Error: no embedding file of % s: % s. Skipped." % (embedding, D_embedding_fname[embedding]))
             with open(path_join(folder_data, D_embedding_fname[embedding]), encoding = "gbk") as ff:
-                for line in ff:
+                for cc, line in enumerate(ff):
+                    if cc == 0:
+                        tmp = line.strip().split(" ")
+                        if len(tmp) == 2 and tmp[0].isdigit() and tmp[1].isdigit():
+                            continue
                     line = line.strip().split(" ")
                     if line[0] not in wordlist:
                         continue
@@ -120,9 +134,6 @@ def read_nondist_wordvec(folder_data, fname_wordlist, D_embedding_fname, is_read
         vocab, data, row_ind, col_ind = [], [], [], []
         with gzip.open(path_join(folder_data, "binary-vectors.txt.gz")) as ff:
             for cc, line in enumerate(ff):
-
-                if cc > 5000:
-                    break
                 line = line.decode("gbk").strip().split(" ")
 
                 if line[0] not in wordlist:
@@ -187,16 +198,19 @@ def PHI(C, gamma):
     return C_new
 
 
-def abtt(word_vec, D = 1):
+def abtt(word_vec, D = 1, is_centering = True):
     # D: the number of PCs to delete.
     tmp_mean = word_vec.mean(axis = 0)
-    word_vec -= tmp_mean
+    if is_centering:
+        word_vec -= tmp_mean
     #u, s, vt = svds(word_vec, k = word_vec.shape[1] - 1)
     # k should be word_vec.shape[1], but svds doesn't support full-rank, i.e. k < min(word_vec.shape).
     u, s, vt = svd(word_vec, full_matrices = False)
     for ii in range(D):
         s[ii] = 0
-    ans = u @ np.diag(s) @ vt + tmp_mean
+    ans = u @ np.diag(s) @ vt
+    if is_centering:
+        ans += tmp_mean
     return ans
 
 
@@ -269,7 +283,14 @@ def similarity_eval(dataSetAddress, wordVecModel, vocab, conceptorProj=False, C 
     return spearman_rho[0]
 
 
-def evaluation_wordvectorsorg(D_embedding_vec, folder_evaluation, L_fname):
+def evaluation_wordvectorsorg(D_embedding_vec, folder_evaluation, L_fname,
+                              is_read = True,
+                              is_write_conceptored_embedding = False,
+                              folder_write = "",
+                              folder_data = "",
+                              fname_wordlist = "",
+                              D_embedding_fname = None,
+                              is_read_dense = True):
 
     D_embedding_abbt_result = dict()
     D_embedding_abbt_result["word2vec"], D_embedding_abbt_result["glove840B300D"] = load_abtt_results()
@@ -280,74 +301,101 @@ def evaluation_wordvectorsorg(D_embedding_vec, folder_evaluation, L_fname):
     D_embedding_alpha = {"NondistDense": 10.}
     D_embedding_Cproto = dict()
     D_embedding_Cadjusted = dict()
-    for ii in D_embedding_vec:
-        if ii not in D_embedding_beta:
-            print("Warning: missing beta value of % s, using beta = 1" % ii)
-            D_embedding_beta[ii] = 1
-        D_embedding_Cproto[ii] = proto_conceptor(D_embedding_vec[ii][1], ii, alpha = D_embedding_alpha.get(ii, 1))
-        D_embedding_Cadjusted[ii] = PHI(D_embedding_Cproto[ii], D_embedding_beta[ii])
-        print('beta of % s = % s, alpha = % s' % (ii, D_embedding_beta[ii], D_embedding_alpha.get(ii, 1)))
-        print('Quota for % s conceptor is' % ii, trace(D_embedding_Cadjusted[ii]) / D_embedding_Cproto[ii].shape[0])
-        print('Quota for % s conceptor (before PHI) is' % ii, trace(D_embedding_Cproto[ii]) / D_embedding_Cproto[ii].shape[0])
-    print()
 
     wordSimResult = {}
-    for fname in L_fname:
-        dataSetAddress = path_join(folder_evaluation, fname)
-        print('evaluating the data set', fname)
 
-        for embedding in D_embedding_vec:
+    for embedding in D_embedding_vec:
+
+        if not is_read:
+            print("\tnow reading embedding % s" % embedding)
+            if not exists(path_join(folder_data, D_embedding_fname[embedding])):
+                print("Error: no embedding file of % s: % s. Skipped." % (embedding, D_embedding_fname[embedding]))
+                continue
+            tmp_D_embedding_vec = read_nondist_wordvec(folder_data = folder_data,
+                                                       fname_wordlist = fname_wordlist,
+                                                       D_embedding_fname = {embedding: D_embedding_fname[embedding]},
+                                                       is_read_dense = is_read_dense)
+            tmp_wordVecModel =  tmp_D_embedding_vec[embedding][1]
+            tmp_vocab =  tmp_D_embedding_vec[embedding][0]
+
+        else:
+            tmp_wordVecModel = D_embedding_vec[embedding][1]
+            tmp_vocab = D_embedding_vec[embedding][0]
+
+        D_embedding_Cproto[embedding] = proto_conceptor(tmp_wordVecModel, embedding, alpha=D_embedding_alpha.get(embedding, 1))
+        if embedding not in D_embedding_beta:
+            if trace(D_embedding_Cproto[embedding]) / D_embedding_Cproto[embedding].shape[0] < 0.1:
+                D_embedding_beta[embedding] = 2
+            else:
+                D_embedding_beta[embedding] = 1
+            print("Warning: missing beta value of % s, using beta = % s" % (embedding, D_embedding_beta[embedding]))
+        D_embedding_Cadjusted[embedding] = PHI(D_embedding_Cproto[embedding], D_embedding_beta[embedding])
+
+        print('\tbeta of % s = % s, alpha = % s' % (embedding, D_embedding_beta[embedding], D_embedding_alpha.get(embedding, 1)))
+        print('\tQuota for % s conceptor is' % embedding, trace(D_embedding_Cadjusted[embedding]) / D_embedding_Cproto[embedding].shape[0])
+        print('\tQuota for % s conceptor (before PHI) is' % embedding, trace(D_embedding_Cproto[embedding]) / D_embedding_Cproto[embedding].shape[0])
+
+        if is_write_conceptored_embedding:
+            with open(path_join(folder_write, "% s.txt" % embedding), "w") as fw:
+                fw.write("% s % s\n" % tmp_wordVecModel.shape)
+                for tmp_word, line in zip(tmp_vocab, tmp_wordVecModel - tmp_wordVecModel @ D_embedding_Cadjusted[embedding]):
+                    fw.write(tmp_word + " " + " ".join(map(str, line)) + "\n")
+            print("\tfinished writing embedding % s" % embedding)
+
+        for fname in L_fname:
+            dataSetAddress = path_join(folder_evaluation, fname)
+            print('\tevaluating the data set', fname)
 
             tmp_similarity_conceptor = similarity_eval(dataSetAddress,
-                                             wordVecModel = D_embedding_vec[embedding][1],
-                                             vocab = D_embedding_vec[embedding][0],
+                                             wordVecModel = tmp_wordVecModel,
+                                             vocab = tmp_vocab,
                                              conceptorProj = True,
                                              C = D_embedding_Cadjusted[embedding])
             tmp_similarity_raw = similarity_eval(dataSetAddress,
-                                             wordVecModel = D_embedding_vec[embedding][1],
-                                             vocab = D_embedding_vec[embedding][0],
+                                                 wordVecModel=tmp_wordVecModel,
+                                                 vocab=tmp_vocab,
                                              conceptorProj = False,
                                              C = D_embedding_Cadjusted[embedding])
 
             tmp_similarity_abtt1 = similarity_eval(dataSetAddress,
-                                                 wordVecModel= abtt(D_embedding_vec[embedding][1], D = 1),
-                                                 vocab=D_embedding_vec[embedding][0],
+                                                 wordVecModel= abtt(tmp_wordVecModel, D = 1),
+                                                 vocab=tmp_vocab,
                                                  conceptorProj=False,
                                                  C=D_embedding_Cadjusted[embedding])
 
             tmp_similarity_abtt2 = similarity_eval(dataSetAddress,
-                                                   wordVecModel=abtt(D_embedding_vec[embedding][1], D=2),
-                                                   vocab=D_embedding_vec[embedding][0],
+                                                   wordVecModel=abtt(tmp_wordVecModel, D=2),
+                                                   vocab=tmp_vocab,
                                                    conceptorProj=False,
                                                    C=D_embedding_Cadjusted[embedding])
 
             tmp_similarity_abtt3 = similarity_eval(dataSetAddress,
-                                                   wordVecModel=abtt(D_embedding_vec[embedding][1], D=3),
-                                                   vocab=D_embedding_vec[embedding][0],
+                                                   wordVecModel=abtt(tmp_wordVecModel, D=3),
+                                                   vocab=tmp_vocab,
                                                    conceptorProj=False,
                                                    C=D_embedding_Cadjusted[embedding])
 
             tmp_similarity_abtt4 = similarity_eval(dataSetAddress,
-                                                   wordVecModel=abtt(D_embedding_vec[embedding][1], D=4),
-                                                   vocab=D_embedding_vec[embedding][0],
+                                                   wordVecModel=abtt(tmp_wordVecModel, D=4),
+                                                   vocab=tmp_vocab,
                                                    conceptorProj=False,
                                                    C=D_embedding_Cadjusted[embedding])
 
             tmp_similarity_abtt5 = similarity_eval(dataSetAddress,
-                                                   wordVecModel=abtt(D_embedding_vec[embedding][1], D=5),
-                                                   vocab=D_embedding_vec[embedding][0],
+                                                   wordVecModel=abtt(tmp_wordVecModel, D=5),
+                                                   vocab=tmp_vocab,
                                                    conceptorProj=False,
                                                    C=D_embedding_Cadjusted[embedding])
 
             if embedding in D_embedding_abbt_result:
-                print('% s + ABTT: %.4f ' % (embedding, D_embedding_abbt_result.get(embedding, dict()).get(fname, 0)))
-            print('% s + conceptor: %.4f' % (embedding, tmp_similarity_conceptor))
-            print('% s + raw: %.4f' % (embedding, tmp_similarity_raw))
-            print('% s + abtt1: %.4f' % (embedding, tmp_similarity_abtt1))
-            print('% s + abtt2: %.4f' % (embedding, tmp_similarity_abtt2))
-            print('% s + abtt3: %.4f' % (embedding, tmp_similarity_abtt3))
-            print('% s + abtt4: %.4f' % (embedding, tmp_similarity_abtt4))
-            print('% s + abtt5: %.4f' % (embedding, tmp_similarity_abtt5))
+                print('\t% s + ABTT: %.4f ' % (embedding, D_embedding_abbt_result.get(embedding, dict()).get(fname, 0)))
+            print('\t% s + conceptor: %.4f' % (embedding, tmp_similarity_conceptor))
+            print('\t% s + raw: %.4f' % (embedding, tmp_similarity_raw))
+            print('\t% s + abtt1: %.4f' % (embedding, tmp_similarity_abtt1))
+            print('\t% s + abtt2: %.4f' % (embedding, tmp_similarity_abtt2))
+            print('\t% s + abtt3: %.4f' % (embedding, tmp_similarity_abtt3))
+            print('\t% s + abtt4: %.4f' % (embedding, tmp_similarity_abtt4))
+            print('\t% s + abtt5: %.4f' % (embedding, tmp_similarity_abtt5))
 
             if "Nondist" in embedding:
                 wordSimResult["% s+% s" % (embedding, fname.split(".")[0])] = \
@@ -361,6 +409,19 @@ def evaluation_wordvectorsorg(D_embedding_vec, folder_evaluation, L_fname):
 
         print('\n')
 
+    for ii in D_embedding_vec:
+        print('beta of % s = % s, alpha = % s' % (ii, D_embedding_beta[ii], D_embedding_alpha.get(ii, 1)))
+        print('Quota for % s conceptor is' % ii, trace(D_embedding_Cadjusted[ii]) / D_embedding_Cproto[ii].shape[0])
+        print('Quota for % s conceptor (before PHI) is' % ii, trace(D_embedding_Cproto[ii]) / D_embedding_Cproto[ii].shape[0])
+    print()
+
+    with open("quota.txt", "w") as fw:
+        for ii in D_embedding_vec:
+            fw.write('beta of % s = % s, alpha = % s\n' % (ii, D_embedding_beta[ii], D_embedding_alpha.get(ii, 1)))
+            fw.write('Quota for % s conceptor is % s\n' % (ii, trace(D_embedding_Cadjusted[ii]) / D_embedding_Cproto[ii].shape[0]))
+            fw.write('Quota for % s conceptor (before PHI) is % s\n' %
+                     (ii, trace(D_embedding_Cproto[ii]) / D_embedding_Cproto[ii].shape[0]))
+
     wordSimResult_df = pd.DataFrame(wordSimResult, index=['conceptor', 'raw', "abtt1", "abtt2", "abtt3", "abtt4", "abtt5"]).T
     wordSimResult_df.to_csv(path_join(os.getcwd(), "wordSimResult_df.csv"))
 
@@ -368,7 +429,7 @@ def evaluation_wordvectorsorg(D_embedding_vec, folder_evaluation, L_fname):
     ax.legend(loc="best")
     ax.set_ylim(20, 100)
     ax.set_ylabel("Pearson correlation coefficient x 100")
-    plt.show()
+    #plt.show()
 
     return
 
@@ -380,12 +441,17 @@ def Main():
     start_time = now_time()
     print()
 
+    D_embedding_vec = dict()
+
+    '''
     print("\tstart reading distributional embeddings", (now_time() - start_time).seconds)
     D_embedding_vec = read_dist_wordvec({"word2vec": FNAME_WORD2VEC_GOOGLENEWS,
                                          "glove840B300D": FNAME_GLOVE_840B300D},
                                         FNAME_WIKIWORDS)
     print("\tfinished reading distributional embeddings", (now_time() - start_time).seconds)
+    '''
 
+    '''
     print("\tstart reading nondistributional embeddings", (now_time() - start_time).seconds)
     D_embedding_vec_nondist = read_nondist_wordvec(FOLDER_NONDISTRIBUTIONALVEC,
                                                            FNAME_WIKIWORDS,
@@ -395,10 +461,22 @@ def Main():
     D_embedding_vec.update(D_embedding_vec_nondist)
     print("data reading finished", (now_time() - start_time).seconds)
     print()
+    '''
 
     #for ii in D_embedding_vec: proto_conceptor(D_embedding_vec[ii][1], ii, plotSpectrum = True)
 
-    evaluation_wordvectorsorg(D_embedding_vec, FOLDER_EVALUATION_WORDVECTORSORG, LIST_FNAME_EVALUATION_WORDVECTORSORG)
+    #evaluation_wordvectorsorg(D_embedding_vec, FOLDER_EVALUATION_WORDVECTORSORG, LIST_FNAME_EVALUATION_WORDVECTORSORG)
+
+    evaluation_wordvectorsorg(D_embedding_vec = DICT_NONDIST_EMBEDDING_FNAME,
+                              folder_evaluation = FOLDER_EVALUATION_WORDVECTORSORG,
+                              L_fname = LIST_FNAME_EVALUATION_WORDVECTORSORG,
+                              is_read = False,
+                              is_write_conceptored_embedding = True,
+                              folder_write = FOLDER_RES,
+                              folder_data = FOLDER_NONDISTRIBUTIONALVEC,
+                              fname_wordlist = FNAME_WIKIWORDS,
+                              D_embedding_fname = DICT_NONDIST_EMBEDDING_FNAME,
+                              is_read_dense = True)
 
     print()
     print("finished running conceptor on nondistributional word vectors")
