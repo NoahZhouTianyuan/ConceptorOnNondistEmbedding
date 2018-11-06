@@ -69,13 +69,13 @@ def read_dist_wordvec(D_embedding_fname, fname_wordlist):
     '''
 
     wordlist = set()
-    with open(fname_wordlist) as ff:
-        for line in ff:
+    with open(fname_wordlist) as f_wordlist:
+        for line in f_wordlist:
             wordlist.add(line.strip().split(" ")[0])
 
     D_embedding_vec = dict()
-    for ii in D_embedding_fname:
-        wordVecModel = KeyedVectors.load_word2vec_format(D_embedding_fname[ii], binary=True)
+    for embedding in D_embedding_fname:
+        wordVecModel = KeyedVectors.load_word2vec_format(D_embedding_fname[embedding], binary=True)
         word_in_wordlist_and_model = set(list(wordVecModel.vocab)).intersection(wordlist)
         x_collector_indices = []
         x_collector_words = []
@@ -88,7 +88,7 @@ def read_dist_wordvec(D_embedding_fname, fname_wordlist):
         #print(np.mean(x_collector,0))
         #x_collector -= np.mean(x_collector,0)
 
-        D_embedding_vec[ii] = (x_collector_words, x_collector)
+        D_embedding_vec[embedding] = (x_collector_words, x_collector)
 
     return D_embedding_vec
 
@@ -409,18 +409,18 @@ def evaluation_wordvectorsorg(D_embedding_vec, folder_evaluation, L_fname,
 
         print('\n')
 
-    for ii in D_embedding_vec:
-        print('beta of % s = % s, alpha = % s' % (ii, D_embedding_beta[ii], D_embedding_alpha.get(ii, 1)))
-        print('Quota for % s conceptor is' % ii, trace(D_embedding_Cadjusted[ii]) / D_embedding_Cproto[ii].shape[0])
-        print('Quota for % s conceptor (before PHI) is' % ii, trace(D_embedding_Cproto[ii]) / D_embedding_Cproto[ii].shape[0])
+    for embedding in D_embedding_vec:
+        print('beta of % s = % s, alpha = % s' % (embedding, D_embedding_beta[embedding], D_embedding_alpha.get(embedding, 1)))
+        print('Quota for % s conceptor is' % embedding, trace(D_embedding_Cadjusted[embedding]) / D_embedding_Cproto[embedding].shape[0])
+        print('Quota for % s conceptor (before PHI) is' % embedding, trace(D_embedding_Cproto[embedding]) / D_embedding_Cproto[embedding].shape[0])
     print()
 
     with open("quota.txt", "w") as fw:
-        for ii in D_embedding_vec:
-            fw.write('beta of % s = % s, alpha = % s\n' % (ii, D_embedding_beta[ii], D_embedding_alpha.get(ii, 1)))
-            fw.write('Quota for % s conceptor is % s\n' % (ii, trace(D_embedding_Cadjusted[ii]) / D_embedding_Cproto[ii].shape[0]))
+        for embedding in D_embedding_vec:
+            fw.write('beta of % s = % s, alpha = % s\n' % (embedding, D_embedding_beta[embedding], D_embedding_alpha.get(embedding, 1)))
+            fw.write('Quota for % s conceptor is % s\n' % (embedding, trace(D_embedding_Cadjusted[embedding]) / D_embedding_Cproto[embedding].shape[0]))
             fw.write('Quota for % s conceptor (before PHI) is % s\n' %
-                     (ii, trace(D_embedding_Cproto[ii]) / D_embedding_Cproto[ii].shape[0]))
+                     (embedding, trace(D_embedding_Cproto[embedding]) / D_embedding_Cproto[embedding].shape[0]))
 
     wordSimResult_df = pd.DataFrame(wordSimResult, index=['conceptor', 'raw', "abtt1", "abtt2", "abtt3", "abtt4", "abtt5"]).T
     wordSimResult_df.to_csv(path_join(os.getcwd(), "wordSimResult_df.csv"))
@@ -463,7 +463,7 @@ def Main():
     print()
     '''
 
-    #for ii in D_embedding_vec: proto_conceptor(D_embedding_vec[ii][1], ii, plotSpectrum = True)
+    #for embedding in D_embedding_vec: proto_conceptor(D_embedding_vec[embedding][1], embedding, plotSpectrum = True)
 
     #evaluation_wordvectorsorg(D_embedding_vec, FOLDER_EVALUATION_WORDVECTORSORG, LIST_FNAME_EVALUATION_WORDVECTORSORG)
 
