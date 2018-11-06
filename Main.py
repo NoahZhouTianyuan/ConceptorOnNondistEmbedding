@@ -3,6 +3,7 @@
 import os
 from os.path import join as path_join
 import datetime
+import gzip
 
 
 import numpy as np
@@ -13,6 +14,8 @@ from gensim.models.keyedvectors import KeyedVectors
 import scipy.io as sio
 from scipy.stats import spearmanr
 from scipy.spatial.distance import cosine
+from scipy.sparse.linalg import svds
+from scipy.sparse import csc_matrix
 from sklearn.metrics.pairwise import cosine_similarity
 from matplotlib.pyplot import plot
 import matplotlib.pyplot as plt
@@ -33,6 +36,12 @@ FOLDER_EVALUATION_WORDVECTORSORG = path_join(FOLDER_EVALUATION, "wordvectors.org
 LIST_FNAME_EVALUATION_WORDVECTORSORG = ['EN-RG-65.txt', 'EN-WS-353-ALL.txt', 'EN-RW-STANFORD.txt',
                                         'EN-MEN-TR-3k.txt', 'EN-MTurk-287.txt', 'EN-SIMLEX-999.txt',
                                         'EN-SimVerb-3500.txt']
+DICT_NONDIST_EMBEDDING_FNAME = {"Nondist300D_fullSV": "Nondist300D_fullSV.txt",
+                                "Nondist300D_halfSV": "Nondist300D_halfSV.txt",
+                                "Nondist300D_noSV": "Nondist300D_noSV.txt",
+                                "Nondist300D_wiki200_fullSV": "Nondist300D_fullSV.txt",
+                                "Nondist300D_wiki200_halfSV": "Nondist300D_halfSV.txt",
+                                "Nondist300D_wiki200_noSV": "Nondist300D_noSV.txt",}
 
 
 
@@ -52,14 +61,11 @@ def read_dist_wordvec(D_embedding_fname, fname_wordlist):
     '''
 
     wordlist = set()
-    with open(fname_wordlist) as fread_wordlist:
-        for line in fread_wordlist:
+    with open(fname_wordlist) as ff:
+        for line in ff:
             wordlist.add(line.strip().split(" ")[0])
 
     D_embedding_vec = dict()
-    # JS: What does ii mean -> i.e. name your variable so that I can understand
-    # p.s. I know what it means, but in general, I would expect ii to be an
-    # integer instead of a file name
     for ii in D_embedding_fname:
         wordVecModel = KeyedVectors.load_word2vec_format(D_embedding_fname[ii], binary=True)
         word_in_wordlist_and_model = set(list(wordVecModel.vocab)).intersection(wordlist)
@@ -79,8 +85,62 @@ def read_dist_wordvec(D_embedding_fname, fname_wordlist):
     return D_embedding_vec
 
 
-def read_nondist_wordvec():
-    pass
+def read_nondist_wordvec(folder_data, fname_wordlist, D_embedding_fname, is_read_dense = True):
+    '''
+    To read nondistributional word vectors. Offer two option - dense or sparse.
+    :param folder_data: The data folder storing existed word vectors. It SHOULD CONTAIN two files, one is
+                        "Nondist300D.txt" for dense, and the other is "binary-vectors.txt.gz" for sparse.
+    :param fname_wordlist: A space separated txt whose first column is the word in wordlist and should be kept.
+    :param is_read_dense: if True, read dense vectors, otherwise read sparse ones.
+    :return: vocab, vector_matrix. vocab is a list of words, and vector_matrix is a matrix whose rows are vector
+             representations of corresponding words in vocab. If dense, vector_matrix is of np.array, otherwise it
+             is of scipy.sparse.csc_matrix.
+    '''
+    wordlist = set()
+    with open(fname_wordlist) as ff:
+        for line in ff:
+            wordlist.add(line.strip().split(" ")[0])
+
+    if is_read_dense:
+        ans = dict()
+        for embedding in D_embedding_fname:
+            vocab, X = [], []
+            with open(path_join(folder_data, D_embedding_fname[embedding]), encoding = "gbk") as ff:
+                for line in ff:
+                    line = line.strip().split(" ")
+                    if line[0] not in wordlist:
+                        continue
+                    vocab.append(line[0])
+                    X.append(array(line[1: ], dtype = np.float32))
+            X = np.array(X)
+            ans[embedding] = (vocab, X)
+
+    else:
+        ans = dict()
+        vocab, data, row_ind, col_ind = [], [], [], []
+        with gzip.open(path_join(folder_data, "binary-vectors.txt.gz")) as ff:
+            for cc, line in enumerate(ff):
+
+                if cc > 5000:
+                    break
+                line = line.decode("gbk").strip().split(" ")
+
+                if line[0] not in wordlist:
+                    continue
+                vocab.append(line[0])
+                for col, ii in enumerate(line[1:]):
+                    if float(ii) == 1:
+                        row_ind.append(len(vocab) - 1)
+                        col_ind.append(col)
+                        data.append(1)
+            ncol = len(line) - 1
+
+        X = csc_matrix((data, (row_ind, col_ind)),
+                       shape=(len(vocab), ncol),
+                       dtype=float)
+        ans["sparse_embedding"] = (vocab, X)
+
+    return ans
 
 
 def proto_conceptor(word_vec, embedding_name, alpha = 1, plotSpectrum = False):
@@ -89,19 +149,20 @@ def proto_conceptor(word_vec, embedding_name, alpha = 1, plotSpectrum = False):
     x_collector = word_vec.T
 
     nrWords = x_collector.shape[1]  # number of total words
+    dim = x_collector.shape[0]
 
     R = x_collector.dot(x_collector.T) / nrWords  # calculate the correlation matrix
 
-    C = R @ inv(R + alpha ** (-2) * np.eye(300))  # calculate the conceptor matrix
+    C = R @ inv(R + alpha ** (-2) * np.eye(dim))  # calculate the conceptor matrix
 
     if plotSpectrum:  # visualization: plot the spectrum of the correlation matrix
         Ux, Sx, _ = np.linalg.svd(R)
 
         downWeighedSigVal = Sx / np.array([(1 + alpha * sigma2) for sigma2 in Sx])
 
-        plt.plot(np.arange(300), Sx, 'bo', alpha=0.4,
+        plt.plot(np.arange(dim), Sx, 'bo', alpha=0.4,
                  label='orig ' + embedding_name + ' spectrum')  # here alpha is the transparency level for dots, don't get confused by the hyperparameter alpha!
-        plt.plot(np.arange(300), downWeighedSigVal, 'ro', alpha=0.4,
+        plt.plot(np.arange(dim), downWeighedSigVal, 'ro', alpha=0.4,
                  label='downweighted ' + embedding_name + ' spectrum')  # here alpha is the transparency level for dots, don't get confused by the hyperparameter alpha!
 
         plt.legend()
@@ -124,6 +185,19 @@ def PHI(C, gamma):
         C_new = C.dot(np.linalg.inv(C + gamma ** -2 * (np.eye(dim) - C)))
 
     return C_new
+
+
+def abtt(word_vec, D = 1):
+    # D: the number of PCs to delete.
+    tmp_mean = word_vec.mean(axis = 0)
+    word_vec -= tmp_mean
+    #u, s, vt = svds(word_vec, k = word_vec.shape[1] - 1)
+    # k should be word_vec.shape[1], but svds doesn't support full-rank, i.e. k < min(word_vec.shape).
+    u, s, vt = svd(word_vec, full_matrices = False)
+    for ii in range(D):
+        s[ii] = 0
+    ans = u @ np.diag(s) @ vt + tmp_mean
+    return ans
 
 
 def load_abtt_results():
@@ -169,7 +243,7 @@ def similarity_eval(dataSetAddress, wordVecModel, vocab, conceptorProj=False, C 
 
     extracted_list = []
 
-    C = C if conceptorProj else np.zeros((300, 300))
+    C = C if conceptorProj else np.zeros((wordVecModel.shape[1], wordVecModel.shape[1]))
 
     for (x, y) in pair_list:
         (word_i, word_j) = x
@@ -200,15 +274,21 @@ def evaluation_wordvectorsorg(D_embedding_vec, folder_evaluation, L_fname):
     D_embedding_abbt_result = dict()
     D_embedding_abbt_result["word2vec"], D_embedding_abbt_result["glove840B300D"] = load_abtt_results()
 
-    D_embedding_beta = {"word2vec": 2, "glove840B300D": 1}
+    D_embedding_beta = {"word2vec": 2, "glove840B300D": 1,
+                        "Nondist300D_wiki200_fullSV": 2, "Nondist300D_wiki200_halfSV": 2,
+                        "Nondist300D_fullSV": 2, "Nondist300D_halfSV": 2,}
+    D_embedding_alpha = {"NondistDense": 10.}
     D_embedding_Cproto = dict()
     D_embedding_Cadjusted = dict()
-    # JS: Again ... not a fan of ii
     for ii in D_embedding_vec:
-        D_embedding_Cproto[ii] = proto_conceptor(D_embedding_vec[ii][1], ii)
+        if ii not in D_embedding_beta:
+            print("Warning: missing beta value of % s, using beta = 1" % ii)
+            D_embedding_beta[ii] = 1
+        D_embedding_Cproto[ii] = proto_conceptor(D_embedding_vec[ii][1], ii, alpha = D_embedding_alpha.get(ii, 1))
         D_embedding_Cadjusted[ii] = PHI(D_embedding_Cproto[ii], D_embedding_beta[ii])
-        print('beta of % s = % s' % (ii, D_embedding_beta[ii]))
-        print('Quota for % s conceptor is' % ii, trace(D_embedding_Cadjusted[ii]) / 300)
+        print('beta of % s = % s, alpha = % s' % (ii, D_embedding_beta[ii], D_embedding_alpha.get(ii, 1)))
+        print('Quota for % s conceptor is' % ii, trace(D_embedding_Cadjusted[ii]) / D_embedding_Cproto[ii].shape[0])
+        print('Quota for % s conceptor (before PHI) is' % ii, trace(D_embedding_Cproto[ii]) / D_embedding_Cproto[ii].shape[0])
     print()
 
     wordSimResult = {}
@@ -218,23 +298,72 @@ def evaluation_wordvectorsorg(D_embedding_vec, folder_evaluation, L_fname):
 
         for embedding in D_embedding_vec:
 
-            print('% s + ABTT %.4f: ' % (embedding, D_embedding_abbt_result[embedding][fname]))
-
-            tmp_similarity = similarity_eval(dataSetAddress,
+            tmp_similarity_conceptor = similarity_eval(dataSetAddress,
                                              wordVecModel = D_embedding_vec[embedding][1],
                                              vocab = D_embedding_vec[embedding][0],
                                              conceptorProj = True,
                                              C = D_embedding_Cadjusted[embedding])
+            tmp_similarity_raw = similarity_eval(dataSetAddress,
+                                             wordVecModel = D_embedding_vec[embedding][1],
+                                             vocab = D_embedding_vec[embedding][0],
+                                             conceptorProj = False,
+                                             C = D_embedding_Cadjusted[embedding])
 
-            print('% s + conceptor : %.4f' % (embedding, tmp_similarity))
-            wordSimResult["% s- % s" % (embedding, fname.split(".")[0])] = \
-                [D_embedding_abbt_result[embedding][fname] * 100,
-                 round(tmp_similarity * 100, 2)]
+            tmp_similarity_abtt1 = similarity_eval(dataSetAddress,
+                                                 wordVecModel= abtt(D_embedding_vec[embedding][1], D = 1),
+                                                 vocab=D_embedding_vec[embedding][0],
+                                                 conceptorProj=False,
+                                                 C=D_embedding_Cadjusted[embedding])
 
+            tmp_similarity_abtt2 = similarity_eval(dataSetAddress,
+                                                   wordVecModel=abtt(D_embedding_vec[embedding][1], D=2),
+                                                   vocab=D_embedding_vec[embedding][0],
+                                                   conceptorProj=False,
+                                                   C=D_embedding_Cadjusted[embedding])
+
+            tmp_similarity_abtt3 = similarity_eval(dataSetAddress,
+                                                   wordVecModel=abtt(D_embedding_vec[embedding][1], D=3),
+                                                   vocab=D_embedding_vec[embedding][0],
+                                                   conceptorProj=False,
+                                                   C=D_embedding_Cadjusted[embedding])
+
+            tmp_similarity_abtt4 = similarity_eval(dataSetAddress,
+                                                   wordVecModel=abtt(D_embedding_vec[embedding][1], D=4),
+                                                   vocab=D_embedding_vec[embedding][0],
+                                                   conceptorProj=False,
+                                                   C=D_embedding_Cadjusted[embedding])
+
+            tmp_similarity_abtt5 = similarity_eval(dataSetAddress,
+                                                   wordVecModel=abtt(D_embedding_vec[embedding][1], D=5),
+                                                   vocab=D_embedding_vec[embedding][0],
+                                                   conceptorProj=False,
+                                                   C=D_embedding_Cadjusted[embedding])
+
+            if embedding in D_embedding_abbt_result:
+                print('% s + ABTT: %.4f ' % (embedding, D_embedding_abbt_result.get(embedding, dict()).get(fname, 0)))
+            print('% s + conceptor: %.4f' % (embedding, tmp_similarity_conceptor))
+            print('% s + raw: %.4f' % (embedding, tmp_similarity_raw))
+            print('% s + abtt1: %.4f' % (embedding, tmp_similarity_abtt1))
+            print('% s + abtt2: %.4f' % (embedding, tmp_similarity_abtt2))
+            print('% s + abtt3: %.4f' % (embedding, tmp_similarity_abtt3))
+            print('% s + abtt4: %.4f' % (embedding, tmp_similarity_abtt4))
+            print('% s + abtt5: %.4f' % (embedding, tmp_similarity_abtt5))
+
+            if "Nondist" in embedding:
+                wordSimResult["% s+% s" % (embedding, fname.split(".")[0])] = \
+                    [round(tmp_similarity_conceptor * 100, 2),
+                     round(tmp_similarity_raw * 100, 2),
+                     round(tmp_similarity_abtt1 * 100, 2),
+                     round(tmp_similarity_abtt2 * 100, 2),
+                     round(tmp_similarity_abtt3 * 100, 2),
+                     round(tmp_similarity_abtt4 * 100, 2),
+                     round(tmp_similarity_abtt5 * 100, 2),]
 
         print('\n')
 
-    wordSimResult_df = pd.DataFrame(wordSimResult, index=['all-but-the-top', 'conceptor']).T
+    wordSimResult_df = pd.DataFrame(wordSimResult, index=['conceptor', 'raw', "abtt1", "abtt2", "abtt3", "abtt4", "abtt5"]).T
+    wordSimResult_df.to_csv(path_join(os.getcwd(), "wordSimResult_df.csv"))
+
     ax = wordSimResult_df.plot(kind="bar")
     ax.legend(loc="best")
     ax.set_ylim(20, 100)
@@ -251,11 +380,21 @@ def Main():
     start_time = now_time()
     print()
 
-    print("start reading distributional embeddings", (now_time() - start_time).seconds)
+    print("\tstart reading distributional embeddings", (now_time() - start_time).seconds)
     D_embedding_vec = read_dist_wordvec({"word2vec": FNAME_WORD2VEC_GOOGLENEWS,
                                          "glove840B300D": FNAME_GLOVE_840B300D},
                                         FNAME_WIKIWORDS)
-    print("finished reading distributional embeddings", (now_time() - start_time).seconds)
+    print("\tfinished reading distributional embeddings", (now_time() - start_time).seconds)
+
+    print("\tstart reading nondistributional embeddings", (now_time() - start_time).seconds)
+    D_embedding_vec_nondist = read_nondist_wordvec(FOLDER_NONDISTRIBUTIONALVEC,
+                                                           FNAME_WIKIWORDS,
+                                                           DICT_NONDIST_EMBEDDING_FNAME,
+                                                           is_read_dense=True)
+    print("\tfinished reading nondistributional embeddings", (now_time() - start_time).seconds)
+    D_embedding_vec.update(D_embedding_vec_nondist)
+    print("data reading finished", (now_time() - start_time).seconds)
+    print()
 
     #for ii in D_embedding_vec: proto_conceptor(D_embedding_vec[ii][1], ii, plotSpectrum = True)
 
