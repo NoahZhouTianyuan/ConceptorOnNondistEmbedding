@@ -1,5 +1,5 @@
-# ConceptorOnNondistEmbedding
-Apply conceptor on vectors of nondistributional word embedding. And compare the results to show what happened.
+# Getting in Shape: Word Embedding SubSpaces
+Studying the alignment of different kinds of word embedding. Mostly, on the alignment between distributional word vectors (word2vec, GloVe, FastText) and non-distributional word vectors.
 
 ### Outline
 
