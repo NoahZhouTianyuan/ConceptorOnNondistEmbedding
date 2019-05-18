@@ -15,7 +15,7 @@ folder_alignedVec = r"data\AlignedVec"
 
 L_nondist, L_nondist_conceptored = [], []
 for sv_type in ["fullSV", "halfSV", "noSV"]:
-    for wiki200_type in ["_wiki200", ""]:
+    for wiki200_type in ["_wiki200freq", "_wiki200", ""]:
         L_nondist_conceptored.append("Nondist_300D_% s% s+conceptored.txt" % (sv_type, wiki200_type))
         L_nondist.append("Nondist_300D_% s% s.txt" % (sv_type, wiki200_type))
 
